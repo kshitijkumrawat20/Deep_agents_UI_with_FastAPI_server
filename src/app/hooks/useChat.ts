@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
-import { useStream } from "@langchain/langgraph-sdk/react";
+import { useCallback, useState } from "react";
 import {
   type Message,
   type Assistant,
@@ -10,8 +9,8 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import type { UseStreamThread } from "@langchain/langgraph-sdk/react";
 import type { TodoItem } from "@/app/types/types";
-import { useClient } from "@/providers/ClientProvider";
 import { useQueryState } from "nuqs";
+import { parseStream } from "@/app/utils/streamParser";
 
 export type StateType = {
   messages: Message[];
@@ -35,131 +34,86 @@ export function useChat({
   thread?: UseStreamThread<StateType>;
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
-  const client = useClient();
-
-  const stream = useStream<StateType>({
-    assistantId: activeAssistant?.assistant_id || "",
-    client: client ?? undefined,
-    reconnectOnMount: true,
-    threadId: threadId ?? null,
-    onThreadId: setThreadId,
-    defaultHeaders: { "x-auth-scheme": "langsmith" },
-    // Revalidate thread list when stream finishes, errors, or creates new thread
-    onFinish: onHistoryRevalidate,
-    onError: onHistoryRevalidate,
-    onCreated: onHistoryRevalidate,
-    experimental_thread: thread,
-  });
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [toolCall, setToolCall] = useState<string | undefined>(undefined);
 
   const sendMessage = useCallback(
-    (content: string) => {
+    async (content: string) => {
       const newMessage: Message = { id: uuidv4(), type: "human", content };
-      stream.submit(
-        { messages: [newMessage] },
-        {
-          optimisticValues: (prev) => ({
-            messages: [...(prev.messages ?? []), newMessage],
-          }),
-          config: { ...(activeAssistant?.config ?? {}), recursion_limit: 100 },
-        }
-      );
-      // Update thread list immediately when sending a message
-      onHistoryRevalidate?.();
-    },
-    [stream, activeAssistant?.config, onHistoryRevalidate]
-  );
+      const updatedMessages = [...messages, newMessage];
+      setMessages(updatedMessages);
+      setIsLoading(true);
 
-  const runSingleStep = useCallback(
-    (
-      messages: Message[],
-      checkpoint?: Checkpoint,
-      isRerunningSubagent?: boolean,
-      optimisticMessages?: Message[]
-    ) => {
-      if (checkpoint) {
-        stream.submit(undefined, {
-          ...(optimisticMessages
-            ? { optimisticValues: { messages: optimisticMessages } }
-            : {}),
-          config: activeAssistant?.config,
-          checkpoint: checkpoint,
-          ...(isRerunningSubagent
-            ? { interruptAfter: ["tools"] }
-            : { interruptBefore: ["tools"] }),
+      try {
+        // Use direct URL to bypass Next.js proxy timeout
+        const response = await fetch("http://127.0.0.1:8000/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: updatedMessages.map((m) => ({
+              role: m.type,
+              content: m.content,
+            })),
+            thread_id: threadId ?? undefined,
+          }),
         });
-      } else {
-        stream.submit(
-          { messages },
-          { config: activeAssistant?.config, interruptBefore: ["tools"] }
+
+        if (!response.body) throw new Error("No response body");
+        const reader = response.body.getReader();
+
+        await parseStream(
+          reader,
+          (update) => {
+            if (update.messages) setMessages(update.messages);
+            if (update.todos) setTodos(update.todos);
+            if (update.toolCall !== undefined) setToolCall(update.toolCall);
+          },
+          updatedMessages
         );
+      } catch (e) {
+        console.error("Chat error:", e);
+      } finally {
+        setIsLoading(false);
+        setToolCall(undefined);
+        onHistoryRevalidate?.(); // Refresh history
       }
     },
-    [stream, activeAssistant?.config]
+    [messages, threadId, onHistoryRevalidate]
   );
 
-  const setFiles = useCallback(
-    async (files: Record<string, string>) => {
-      if (!threadId) return;
-      // TODO: missing a way how to revalidate the internal state
-      // I think we do want to have the ability to externally manage the state
-      await client.threads.updateState(threadId, { values: { files } });
-    },
-    [client, threadId]
-  );
-
-  const continueStream = useCallback(
-    (hasTaskToolCall?: boolean) => {
-      stream.submit(undefined, {
-        config: {
-          ...(activeAssistant?.config || {}),
-          recursion_limit: 100,
-        },
-        ...(hasTaskToolCall
-          ? { interruptAfter: ["tools"] }
-          : { interruptBefore: ["tools"] }),
-      });
-      // Update thread list when continuing stream
-      onHistoryRevalidate?.();
-    },
-    [stream, activeAssistant?.config, onHistoryRevalidate]
-  );
-
-  const markCurrentThreadAsResolved = useCallback(() => {
-    stream.submit(null, { command: { goto: "__end__", update: null } });
-    // Update thread list when marking thread as resolved
-    onHistoryRevalidate?.();
-  }, [stream, onHistoryRevalidate]);
-
-  const resumeInterrupt = useCallback(
-    (value: any) => {
-      stream.submit(null, { command: { resume: value } });
-      // Update thread list when resuming from interrupt
-      onHistoryRevalidate?.();
-    },
-    [stream, onHistoryRevalidate]
-  );
-
-  const stopStream = useCallback(() => {
-    stream.stop();
-  }, [stream]);
+  // Fallback / Stubbed functions to maintain compatibility with UI components
+  // that might expect these from the original hook
+  const stream = {
+    messages,
+    values: { todos, files: {}, email: undefined, ui: undefined },
+    isLoading,
+    isThreadLoading: false,
+    interrupt: undefined,
+    getMessagesMetadata: () => ({}),
+    submit: () => { }, // No-op, managed by sendMessage
+    stop: () => { },
+  };
 
   return {
     stream,
-    todos: stream.values.todos ?? [],
-    files: stream.values.files ?? {},
-    email: stream.values.email,
-    ui: stream.values.ui,
-    setFiles,
-    messages: stream.messages,
-    isLoading: stream.isLoading,
-    isThreadLoading: stream.isThreadLoading,
-    interrupt: stream.interrupt,
-    getMessagesMetadata: stream.getMessagesMetadata,
+    todos,
+    files: {}, // TODO: Implement file syncing if needed
+    email: undefined,
+    ui: undefined,
+    setFiles: async () => { }, // TODO
+    messages,
+    isLoading,
+    isThreadLoading: false, // Not using SDK threading for now
+    interrupt: undefined,
+    getMessagesMetadata: () => ({}),
     sendMessage,
-    runSingleStep,
-    continueStream,
-    stopStream,
-    markCurrentThreadAsResolved,
-    resumeInterrupt,
+    runSingleStep: () => { }, // Simplified for now
+    continueStream: () => { },
+    stopStream: () => { },
+    markCurrentThreadAsResolved: () => { },
+    resumeInterrupt: () => { },
+    toolCall, // Expose this if UI wants to show "Calling tool X..."
   };
 }

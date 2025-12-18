@@ -271,7 +271,12 @@ export function ThreadList({
       </div>
 
       <ScrollArea className="h-0 flex-1">
-        {threads.error && <ErrorState message={threads.error.message} />}
+        {threads.error && (
+          <div className="flex flex-col items-center justify-center p-8 text-center">
+            <p className="text-sm text-red-600">Failed to load threads</p>
+            <p className="mt-1 text-xs text-muted-foreground">Using local mode.</p>
+          </div>
+        )}
 
         {!threads.error && !threads.data && threads.isLoading && (
           <LoadingState />

@@ -4,15 +4,15 @@ import { createContext, useContext, useMemo, ReactNode } from "react";
 import { Client } from "@langchain/langgraph-sdk";
 
 interface ClientContextValue {
-  client: Client;
+  client: Client | null;
 }
 
 const ClientContext = createContext<ClientContextValue | null>(null);
 
 interface ClientProviderProps {
   children: ReactNode;
-  deploymentUrl: string;
-  apiKey: string;
+  deploymentUrl?: string; // Made optional
+  apiKey?: string; // Made optional
 }
 
 export function ClientProvider({
@@ -21,6 +21,7 @@ export function ClientProvider({
   apiKey,
 }: ClientProviderProps) {
   const client = useMemo(() => {
+    if (!deploymentUrl) return null; // Return null if no URL (custom backend mode)
     return new Client({
       apiUrl: deploymentUrl,
       defaultHeaders: {
@@ -37,11 +38,8 @@ export function ClientProvider({
   );
 }
 
-export function useClient(): Client {
+export function useClient(): Client | null {
   const context = useContext(ClientContext);
-
-  if (!context) {
-    throw new Error("useClient must be used within a ClientProvider");
-  }
-  return context.client;
+  // It's okay if context is null or client is null now
+  return context?.client ?? null;
 }

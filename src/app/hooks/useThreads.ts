@@ -63,74 +63,90 @@ export function useThreads(props: {
       apiKey: string;
       status?: Thread["status"];
     }) => {
-      const client = new Client({
-        apiUrl: deploymentUrl,
-        defaultHeaders: apiKey ? { "X-Api-Key": apiKey } : {},
-      });
+      try {
+        const client = new Client({
+          apiUrl: deploymentUrl,
+          defaultHeaders: apiKey ? { "X-Api-Key": apiKey } : {},
+        });
 
-      // Check if assistantId is a UUID (deployed) or graph name (local)
-      const isUUID =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-          assistantId
-        );
+        // Check if assistantId is a UUID (deployed) or graph name (local)
+        const isUUID =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            assistantId
+          );
 
-      const threads = await client.threads.search({
-        limit: pageSize,
-        offset: pageIndex * pageSize,
-        sortBy: "updated_at" as const,
-        sortOrder: "desc" as const,
-        status,
-        // Only filter by assistant_id metadata for deployed graphs (UUIDs)
-        // Local dev graphs don't set this metadata
-        ...(isUUID ? { metadata: { assistant_id: assistantId } } : {}),
-      });
+        const threads = await client.threads.search({
+          limit: pageSize,
+          offset: pageIndex * pageSize,
+          sortBy: "updated_at" as const,
+          sortOrder: "desc" as const,
+          status,
+          // Only filter by assistant_id metadata for deployed graphs (UUIDs)
+          // Local dev graphs don't set this metadata
+          ...(isUUID ? { metadata: { assistant_id: assistantId } } : {}),
+        });
 
-      return threads.map((thread): ThreadItem => {
-        let title = "Untitled Thread";
-        let description = "";
+        return threads.map((thread): ThreadItem => {
+          let title = "Untitled Thread";
+          let description = "";
 
-        try {
-          if (thread.values && typeof thread.values === "object") {
-            const values = thread.values as any;
-            const firstHumanMessage = values.messages.find(
-              (m: any) => m.type === "human"
-            );
-            if (firstHumanMessage?.content) {
-              const content =
-                typeof firstHumanMessage.content === "string"
-                  ? firstHumanMessage.content
-                  : firstHumanMessage.content[0]?.text || "";
-              title = content.slice(0, 50) + (content.length > 50 ? "..." : "");
+          try {
+            if (thread.values && typeof thread.values === "object") {
+              const values = thread.values as any;
+              const firstHumanMessage = values.messages.find(
+                (m: any) => m.type === "human"
+              );
+              if (firstHumanMessage?.content) {
+                const content =
+                  typeof firstHumanMessage.content === "string"
+                    ? firstHumanMessage.content
+                    : firstHumanMessage.content[0]?.text || "";
+                title = content.slice(0, 50) + (content.length > 50 ? "..." : "");
+              }
+              const firstAiMessage = values.messages.find(
+                (m: any) => m.type === "ai"
+              );
+              if (firstAiMessage?.content) {
+                const content =
+                  typeof firstAiMessage.content === "string"
+                    ? firstAiMessage.content
+                    : firstAiMessage.content[0]?.text || "";
+                description = content.slice(0, 100);
+              }
             }
-            const firstAiMessage = values.messages.find(
-              (m: any) => m.type === "ai"
-            );
-            if (firstAiMessage?.content) {
-              const content =
-                typeof firstAiMessage.content === "string"
-                  ? firstAiMessage.content
-                  : firstAiMessage.content[0]?.text || "";
-              description = content.slice(0, 100);
-            }
+          } catch {
+            // Fallback to thread ID
+            title = `Thread ${thread.thread_id.slice(0, 8)}`;
           }
-        } catch {
-          // Fallback to thread ID
-          title = `Thread ${thread.thread_id.slice(0, 8)}`;
-        }
 
-        return {
-          id: thread.thread_id,
-          updatedAt: new Date(thread.updated_at),
-          status: thread.status,
-          title,
-          description,
-          assistantId,
-        };
-      });
+          return {
+            id: thread.thread_id,
+            updatedAt: new Date(thread.updated_at),
+            status: thread.status,
+            title,
+            description,
+            assistantId,
+          };
+        });
+      } catch (e: any) {
+        console.warn("Failed to fetch threads from LangGraph server, falling back to local mode.", e);
+        // Return a single mock thread for local development
+        if (pageIndex === 0) {
+          return [{
+            id: "default_thread",
+            updatedAt: new Date(),
+            status: "idle",
+            title: "Local Chat",
+            description: "Local Agent Session",
+            assistantId: assistantId
+          }];
+        }
+        return [];
+      }
     },
     {
       revalidateFirstPage: true,
-      revalidateOnFocus: true,
+      revalidateOnFocus: false, // Disable focus revalidation to avoid constant error logging
     }
   );
 }

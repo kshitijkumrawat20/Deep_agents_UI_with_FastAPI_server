@@ -39,6 +39,22 @@ function HomePageInner({
   const [assistant, setAssistant] = useState<Assistant | null>(null);
 
   const fetchAssistant = useCallback(async () => {
+    // If client is null (because no deploymentUrl), skip fetching
+    if (!client) {
+      setAssistant({
+        assistant_id: config.assistantId || "local-agent",
+        graph_id: "agent",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        config: {},
+        metadata: {},
+        version: 1,
+        name: "Local Agent",
+        context: {},
+      });
+      return;
+    }
+
     const isUUID =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         config.assistantId
@@ -66,7 +82,6 @@ function HomePageInner({
     } else {
       try {
         // We should try to list out the assistants for this graph, and then use the default one.
-        // TODO: Paginate this search, but 100 should be enough for graph name
         const assistants = await client.assistants.search({
           graphId: config.assistantId,
           limit: 100,
@@ -79,8 +94,8 @@ function HomePageInner({
         }
         setAssistant(defaultAssistant);
       } catch (error) {
-        console.error(
-          "Failed to find default assistant from graph_id: try setting the assistant_id directly:",
+        console.warn(
+          "Failed to find default assistant from graph_id (likely local mode). Using default:",
           error
         );
         setAssistant({
@@ -113,7 +128,7 @@ function HomePageInner({
       <div className="flex h-screen flex-col">
         <header className="flex h-16 items-center justify-between border-b border-border px-6">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-semibold">Deep Agent UI</h1>
+            <h1 className="text-xl font-semibold">RFPs Analyzer MultiAgent System</h1>
             {!sidebar && (
               <Button
                 variant="ghost"
